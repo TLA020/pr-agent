@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -230,6 +231,15 @@ class TestAzureDevopsProviderSuggestionAnchoring:
 
         assert provider.publish_code_suggestions([_suggestion("/src/Api/Controllers/SomeController.cs")]) is False
 
+    def test_disabled_fallback_does_not_retry_a_failed_suggestion(self):
+        provider = _provider_with_diff("/src/Api/Controllers/SomeController.cs")
+        provider.azure_devops_client.create_thread.side_effect = RuntimeError("request failed")
+        suggestion = _suggestion("/src/Api/Controllers/SomeController.cs")
+        suggestion["fallback_to_pr_comment"] = False
+
+        assert provider.publish_code_suggestions([suggestion]) is False
+        assert provider.azure_devops_client.create_thread.call_count == 1
+
     def test_anchored_publish_failure_uses_the_publish_failure_reason(self):
         provider = _provider_with_diff("/src/Api/Controllers/SomeController.cs")
         provider.azure_devops_client.create_thread.side_effect = [RuntimeError("request failed"), MagicMock()]
@@ -377,3 +387,78 @@ class TestAzureDevopsProviderCreateInlineComment:
 
         body = _created_threads(provider)[0].comments[0].content
         assert body.startswith("`src/Api/ControllersRemoved.cs`")
+
+
+class TestAzureDevopsProviderInlineComments:
+    @staticmethod
+    def _provider(threads):
+        provider = AzureDevopsProvider.__new__(AzureDevopsProvider)
+        provider.repo_slug = "my-repo"
+        provider.workspace_slug = "my-project"
+        provider.pr_num = 42
+        provider.azure_devops_client = MagicMock()
+        provider.azure_devops_client.get_threads.return_value = threads
+        provider.diff_files = [FilePatchInfo(base_file="", head_file="", patch="", filename="/app.py")]
+        return provider
+
+    def test_get_inline_comment_bodies_only_returns_line_threads(self):
+        line_thread = SimpleNamespace(
+            thread_context=SimpleNamespace(file_path="/app.py", right_file_start=SimpleNamespace(line=3)),
+            comments=[SimpleNamespace(content="line finding")],
+        )
+        file_thread = SimpleNamespace(
+            thread_context=SimpleNamespace(file_path="/app.py", right_file_start=None),
+            comments=[SimpleNamespace(content="file finding")],
+        )
+        pr_thread = SimpleNamespace(
+            thread_context=None,
+            comments=[SimpleNamespace(content="PR finding")],
+        )
+        provider = self._provider([line_thread, file_thread, pr_thread])
+
+        assert provider.get_inline_comment_bodies() == ["line finding"]
+        provider.azure_devops_client.get_threads.assert_called_once_with(
+            repository_id="my-repo",
+            pull_request_id=42,
+            project="my-project",
+        )
+
+    def test_get_inline_comment_bodies_supports_serialized_context(self):
+        thread = SimpleNamespace(
+            thread_context={"filePath": "/app.py", "rightFileStart": {"line": 3, "offset": 1}},
+            comments=[SimpleNamespace(content="line finding"), SimpleNamespace(content="")],
+        )
+
+        assert self._provider([thread]).get_inline_comment_bodies() == ["line finding"]
+
+    def test_get_inline_comment_bodies_includes_recent_successful_posts(self):
+        provider = self._provider([])
+        provider.publish_code_suggestions([{
+            "body": "line finding",
+            "relevant_file": "/app.py",
+            "relevant_lines_start": 3,
+            "relevant_lines_end": 3,
+        }])
+
+        assert provider.get_inline_comment_bodies() == ["line finding"]
+
+    def test_set_pr_clears_inline_comment_state(self):
+        provider = self._provider([])
+        provider._published_inline_comment_bodies = ["old finding"]
+        provider._inline_comment_store = MagicMock()
+        provider._parse_pr_url = MagicMock(return_value=("new-project", "new-repo", 43))
+        provider._get_pr = MagicMock(return_value=MagicMock())
+
+        provider.set_pr("https://dev.azure.com/example/new-project/_git/new-repo/pullrequest/43")
+
+        assert provider._published_inline_comment_bodies == []
+        assert provider._inline_comment_store is None
+
+    def test_recent_inline_comment_bodies_returns_a_copy(self):
+        provider = self._provider([])
+        provider._published_inline_comment_bodies = ["line finding"]
+
+        bodies = provider.get_recent_inline_comment_bodies()
+        bodies.append("other finding")
+
+        assert provider.get_recent_inline_comment_bodies() == ["line finding"]
