@@ -442,6 +442,23 @@ async def test_malformed_suggestion_does_not_stop_later_suggestions():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("existing_code", [123, ["old()"], {"code": "old()"}])
+@pytest.mark.parametrize("improved_code", ["new()", ""])
+async def test_non_string_existing_code_does_not_stop_later_suggestions(existing_code, improved_code):
+    git_provider = _provider_with_file("old()\n")
+    tool = _make_tool(git_provider)
+
+    await tool.push_inline_code_suggestions({"code_suggestions": [
+        _valid_suggestion(existing_code=existing_code, improved_code=improved_code, score=8),
+        _valid_suggestion(score=8),
+    ]})
+
+    published = git_provider.publish_code_suggestions.call_args.args[0]
+    assert len(published) == 1
+    assert published[0]["original_suggestion"]["existing_code"] == "old()"
+
+
+@pytest.mark.asyncio
 async def test_advice_only_suggestion_is_published_instead_of_being_dropped():
     git_provider = _provider_with_file("def f():\n    return old()\n")
     tool = _make_tool(git_provider)

@@ -13,23 +13,26 @@ from jinja2 import Environment, StrictUndefined
 from pr_agent.algo import MAX_TOKENS
 from pr_agent.algo.ai_handlers.base_ai_handler import BaseAiHandler
 from pr_agent.algo.ai_handlers.litellm_ai_handler import LiteLLMAIHandler
-from pr_agent.algo.git_patch_processing import decouple_and_convert_to_hunks_with_lines_numbers
+from pr_agent.algo.git_patch_processing import \
+    decouple_and_convert_to_hunks_with_lines_numbers
 from pr_agent.algo.pr_processing import (_get_all_models,
                                          add_ai_metadata_to_diff_files,
                                          get_pr_diff, get_pr_multi_diffs,
                                          retry_with_fallback_models)
+from pr_agent.algo.repo_context import build_repo_context
 from pr_agent.algo.run_details import init_run_details
 from pr_agent.algo.skills_loader import get_skills_context
-from pr_agent.algo.repo_context import build_repo_context
 from pr_agent.algo.token_handler import TokenHandler
-from pr_agent.algo.utils import (ModelType, load_yaml, replace_code_tags,
-                                 show_relevant_configurations, show_run_details,
-                                 get_max_tokens, clip_tokens, get_model)
+from pr_agent.algo.utils import (ModelType, clip_tokens, get_max_tokens,
+                                 get_model, load_yaml, replace_code_tags,
+                                 show_relevant_configurations,
+                                 show_run_details)
 from pr_agent.config_loader import get_settings
 from pr_agent.git_providers import (AzureDevopsProvider, GithubProvider,
                                     GitLabProvider, get_git_provider,
                                     get_git_provider_with_context)
-from pr_agent.git_providers.git_provider import GitProvider, IncrementalPR, get_main_pr_language
+from pr_agent.git_providers.git_provider import (GitProvider, IncrementalPR,
+                                                 get_main_pr_language)
 from pr_agent.log import get_logger
 from pr_agent.servers.help import HelpMessage
 from pr_agent.tools.pr_description import insert_br_after_x_chars
@@ -660,6 +663,9 @@ class PRCodeSuggestions:
                 relevant_lines_end = int(d['relevant_lines_end'])
                 content = d['suggestion_content'].rstrip()
                 new_code_snippet = (d.get("improved_code") or "").rstrip()
+                existing_code = d.get("existing_code")
+                if not isinstance(existing_code, str):
+                    raise TypeError("existing_code must be a string")
                 label = d['label'].strip()
             except (AttributeError, KeyError, TypeError, ValueError) as e:
                 get_logger().warning(f"Could not parse suggestion: {d}, error: {e}")
@@ -667,7 +673,7 @@ class PRCodeSuggestions:
 
             is_applicable, fallback_reason, has_valid_anchor = self._validate_suggestion(
                 relevant_file, relevant_lines_start, relevant_lines_end,
-                d.get("existing_code") if new_code_snippet else None)
+                existing_code if new_code_snippet else None)
             if new_code_snippet and has_valid_anchor:
                 new_code_snippet = self.dedent_code(relevant_file, relevant_lines_start, new_code_snippet)
 
