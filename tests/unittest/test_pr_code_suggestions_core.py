@@ -573,6 +573,29 @@ def test_is_applicable_suggestion_preserves_blank_line_positions():
     assert tool.is_applicable_suggestion("app.py", 1, 3, "first()\n\nsecond()") is True
 
 
+def test_is_applicable_suggestion_preserves_relative_indentation():
+    git_provider = _provider_with_file("if ready:\n    run()\n")
+    tool = _make_tool(git_provider)
+
+    assert tool.is_applicable_suggestion("app.py", 1, 2, "    if ready:\n        run()") is True
+    assert tool.is_applicable_suggestion("app.py", 1, 2, "if ready:\nrun()") is False
+
+
+def test_is_applicable_suggestion_uses_absolute_patch_lines_for_partial_head_content():
+    git_provider = MagicMock()
+    git_provider.diff_files = [FilePatchInfo(
+        base_file="first()\nlater()\n",
+        head_file="first()\nlater()\n",
+        patch=("@@ -10 +10 @@\n-old_first()\n+first()\n"
+               "@@ -100 +100 @@\n-old_later()\n+later()\n"),
+        filename="app.py",
+        head_file_is_complete=False,
+    )]
+    tool = _make_tool(git_provider)
+
+    assert tool.is_applicable_suggestion("app.py", 100, 100, "later()") is True
+
+
 def test_persistent_update_survives_progress_cleanup_failure():
     """A failing progress-note cleanup must not abort the persistent update:
     if the cleanup error propagated, the caller would fall back to publishing

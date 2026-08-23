@@ -748,7 +748,7 @@ class PRCodeSuggestions:
         diff_file = self._get_diff_file(relevant_file)
         if diff_file is None:
             return False, "the file content is unavailable", False
-        if diff_file.head_file:
+        if diff_file.head_file and getattr(diff_file, "head_file_is_complete", True):
             file_lines = diff_file.head_file.splitlines()
             if relevant_lines_end > len(file_lines):
                 return False, "the anchored range is outside the file", False
@@ -761,8 +761,8 @@ class PRCodeSuggestions:
 
         if not existing_code:
             return False, "the existing code is unavailable", True
-        anchored_lines = [line.strip() for line in anchored_lines]
-        existing_lines = [line.strip() for line in existing_code.splitlines()]
+        anchored_lines = [line.rstrip() for line in textwrap.dedent("\n".join(anchored_lines)).split("\n")]
+        existing_lines = [line.rstrip() for line in textwrap.dedent(existing_code).splitlines()]
         if existing_lines != anchored_lines:
             return False, "the existing code does not match the anchored range", True
         return True, "", True
